@@ -1,40 +1,91 @@
-<header>
+#
+.SYNOPSIS
+    Installiert oder aktualisiert PDF24 Creator.
 
-# Hello GitHub Actions
+.DESCRIPTION
+    Prüft die installierte Version von PDF24 Creator und vergleicht sie mit der aktuellen Online-Version.
+    Falls ein Update nötig ist, wird die MSI-Datei heruntergeladen und installiert.
 
-_Create and run a GitHub Actions workflow._
+.EXITCODES
+    0: Erfolgreich, keine Aktion nötig
+    1: Fehler beim Download
+    2: Fehler bei der Installation
+#
 
-</header>
+# Funktion: Installierte Version auslesen
+function Get-InstalledPDF24Version {
+    $regPaths = @(
+        "HKLM:\SOFTWARE\WOW6432Node\PDF24\PDF24 Creator",
+        "HKLM:\SOFTWARE\PDF24\PDF24 Creator"
+    )
+    foreach ($regPath in $regPaths) {
+        if (Test-Path $regPath) {
+            try {
+                $version = Get-ItemProperty -Path $regPath -Name "Version" -ErrorAction Stop
+                return $version.Version
+            } catch {
+                Write-Warning "Fehler beim Abrufen der Version aus $regPath."
+            }
+        }
+    }
+    return $null
+}
 
-## Finish
 
-_Congratulations friend, you've completed this course!_
+try {
+    $versionPage = Invoke-WebRequest -Uri "https://de.pdf24.org/pdf-creator-download.html"
+    if ($versionPage.Content -match "Version\s+(\d+\.\d+\.\d+)") {
+        $currentOnlineVersion = $matches[1]
+    }
+} catch {
+    Write-Warning "Konnte die aktuelle Online-Version nicht ermitteln. Verwende manuell gepflegte Version."
+}
 
-<img src=https://octodex.github.com/images/jetpacktocat.png alt="Mona the Octocat wearing a jetpack and smiling." width=300 align=right>
 
-Here's a recap of all the tasks you've accomplished in your repository:
+# Installierte Version ermitteln
+$installedVersion = Get-InstalledPDF24Version
 
-- You've created your first GitHub Actions workflow file.
-- You learned where to make your workflow file.
-- You defined an event trigger, a job, and a step for your workflow.
-- You're ready to automate anything you can dream of.
+Write-Host "Installierte Version: $installedVersion"
+Write-Host "Verfügbare Version: $currentOnlineVersion"
 
-### What's next?
+# Vergleich
+if ($installedVersion -and [System.Version]$installedVersion -ge [System.Version]$currentOnlineVersion) {
+    Write-Host "PDF24 Creator ist bereits auf dem neuesten Stand."
+    exit 0
+}
 
-- Learn more about GitHub Actions by reading "[Learn GitHub Actions](https://docs.github.com/actions/learn-github-actions)"
-- Use actions created by others in [awesome-actions](https://github.com/sdras/awesome-actions)
-- We'd love to hear what you thought of this course [in our discussion board](https://github.com/orgs/skills/discussions/categories/hello-github-actions)
-- [Take another course on GitHub Actions](https://skills.github.com/#automate-workflows-with-github-actions)
-- Learn more about GitHub by reading the "[Get started](https://docs.github.com/get-started)" docs
-- To find projects to contribute to, check out [GitHub Explore](https://github.com/explore)
+# Download-URL der MSI-Datei
+$pdf24InstallerUrl = "https://www.pdf24.org/products/pdf-creator/download/pdf24-creator.msi"
+$pdf24Installer = "$env:TEMP\pdf24-creator.msi"
 
-<footer>
+# MSI herunterladen
+try {
+    Invoke-WebRequest -Uri $pdf24InstallerUrl -OutFile $pdf24Installer
+    if (-not (Test-Path $pdf24Installer)) {
+        Write-Host "Fehler: Die heruntergeladene Datei wurde nicht gefunden."
+        exit 1
+    }
+} catch {
+    Write-Host "Fehler: Download der PDF24 MSI-Datei fehlgeschlagen. Details: $($_.Exception.Message)"
+    exit 1
+}
 
-  
----
+# Installation mit benutzerdefinierten Parametern
+# AUTOUPDATE=No → deaktiviert automatische Updates
+# FAXPRINTER=No → Faxdrucker wird nicht installiert
+# SETDEFAULTPRINTER=No → PDF24 wird nicht als Standard-PDF-Programm gesetzt
 
-Get help: [Post in our discussion board](https://github.com/orgs/skills/discussions/categories/hello-github-actions) &bull; [Review the GitHub status page](https://www.githubstatus.com/)
+$process = Start-Process "msiexec.exe" -ArgumentList "/i `"$pdf24Installer`" /qn AUTOUPDATE=No FAXPRINTER=No SETDEFAULTPRINTER=No" -Wait -PassThru
+	if ($process.ExitCode -ne 0) {
+  	  Write-Host "Fehler: Die Installation ist fehlgeschlagen mit ExitCode $($process.ExitCode)."
+  	  exit 2
+}
 
-&copy; 2023 GitHub &bull; [Code of Conduct](https://www.contributor-covenant.org/version/2/1/code_of_conduct/code_of_conduct.md) &bull; [MIT License](https://gh.io/mit)
+# MSI-Datei entfernen
+try {
+    Remove-Item -Path $pdf24Installer -Force
+} catch {
+    Write-Warning "Hinweis: Die MSI-Datei konnte nicht gelöscht werden. Details: $($_.Exception.Message)"
+}
 
-</footer>
+Write-Host "PDF24 Creator wurde erfolgreich installiert oder aktualisiert!"
